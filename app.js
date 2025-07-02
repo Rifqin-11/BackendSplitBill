@@ -9,7 +9,13 @@ import shareRoute from "./routes/share.js"; // 🔥 New
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: "https://splitbill.rifqinaufal11.studio",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 app.use(express.json()); // 👈 Penting agar bisa baca JSON body
 
 // Connect DB
