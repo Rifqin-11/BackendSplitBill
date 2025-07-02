@@ -1,285 +1,213 @@
 import express from "express";
-import multer from "multer";
+import computerVisionClient from "../azureVisionClient.js";
 import fs from "fs";
-import path from "path";
-import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
+import multer from "multer";
 
 const router = express.Router();
-const upload = multer({ dest: path.join(process.cwd(), "uploads/") });
+const upload = multer({ dest: "uploads/" });
 
-// Document AI Configuration
-const PROJECT_ID = "splitbill-464604";
-const LOCATION = "us";
-const PROCESSOR_ID = "b8a8f5e9551d38bf";
+// panggil Azure OCR
+async function extractTextFromImage(filePath) {
+  const stream = () => fs.createReadStream(filePath);
+  const result = await computerVisionClient.readInStream(stream);
+  const operation = result.operationLocation.split("/").pop();
 
-const docAiClient = new DocumentProcessorServiceClient();
-
-// Enhanced currency formatter
-const formatCurrency = (value) => {
-  if (typeof value === "string") {
-    value = value
-      .replace(/[^\d.,-]/g, "")
-      .replace(/\./g, "") // Remove thousand separators
-      .replace(/,/g, "."); // Convert decimal comma to dot
-  }
-  const num = parseFloat(value) || 0;
-  return parseFloat(num.toFixed(3)); // Ensure 3 decimal places
-};
-
-// Main receipt processing function
-router.post("/", upload.single("receipt"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      error: 'Receipt file not found. Use the "receipt" field.',
-    });
+  let resultData;
+  while (true) {
+    resultData = await computerVisionClient.getReadResult(operation);
+    if (["succeeded", "failed"].includes(resultData.status)) break;
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
-  const filePath = req.file.path;
-
-  try {
-    // 1. Read and encode image
-    const buffer = fs.readFileSync(filePath);
-    const base64Image = buffer.toString("base64");
-
-    // 2. Process with Document AI
-    const name = `projects/${PROJECT_ID}/locations/${LOCATION}/processors/${PROCESSOR_ID}`;
-    const [result] = await docAiClient.processDocument({
-      name,
-      rawDocument: {
-        content: base64Image,
-        mimeType: req.file.mimetype,
-      },
-    });
-    const { document } = result;
-    const text = document.text || "";
-
-    // 3. Initialize variables
-    let items = [];
-    let subtotal = 0;
-    let tax = 0;
-    let discount = 0;
-    let total = 0;
-    let paymentMethod = "";
-    let date = "";
-    let merchantName = "";
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line);
-
-    // 4. Merchant and date detection
-    merchantName = detectMerchant(lines);
-    date = detectDate(text);
-
-    // 5. Specialized parsers for different receipt formats
-    if (/OMA OPA CAKERY/i.test(text)) {
-      // OPA CAKERY specific parser
-      const opaResult = parseOpaCakery(lines);
-      items = opaResult.items;
-      total = opaResult.total || total;
-      paymentMethod = opaResult.paymentMethod;
-    } else if (/Gofood/i.test(text)) {
-      // Gofood specific parser
-      const gofoodResult = parseGofood(lines);
-      items = gofoodResult.items;
-      subtotal = gofoodResult.subtotal;
-      discount = gofoodResult.discount;
-      total = gofoodResult.total;
-      paymentMethod = "Gofood";
-    } else {
-      // Generic parser
-      items = parseGenericItems(lines);
-    }
-
-    // 6. Calculate missing values
-    if (items.length > 0) {
-      subtotal = subtotal || items.reduce((sum, item) => sum + item.price, 0);
-      total = total || subtotal - discount + tax;
-    } else if (total === 0) {
-      // Fallback: look for standalone total value
-      total = findStandaloneTotal(lines);
-      if (total > 0) {
-        items = [
-          {
-            name: "Total Payment",
-            quantity: 1,
-            pricePerItem: total,
-            price: total,
-          },
-        ];
-        subtotal = total;
-      }
-    }
-
-    // 7. Final validation
-    if (total > 0 && subtotal === 0) {
-      subtotal = total + discount - tax;
-    }
-
-    // 8. Prepare response
-    return res.json({
-      merchant: merchantName,
-      date,
-      items: items.map((item) => ({
-        name: item.name,
-        quantity: item.quantity || 1,
-        pricePerItem: formatCurrency(item.pricePerItem || item.price),
-        price: formatCurrency(item.price),
-      })),
-      subtotal: formatCurrency(subtotal),
-      tax: formatCurrency(tax),
-      discount: formatCurrency(discount),
-      total: formatCurrency(total),
-      paymentMethod: paymentMethod || detectPaymentMethod(lines),
-      rawText: text,
-    });
-  } catch (err) {
-    console.error("Receipt processing error:", err);
-    return res.status(500).json({
-      error: "Failed to process receipt",
-      details: err.message,
-    });
-  } finally {
-    fs.unlink(filePath, (e) => e && console.error("Cleanup error:", e));
-  }
-});
-
-// Helper functions
-
-function detectMerchant(lines) {
-  const merchantLine = lines.find((line) =>
-    /OMA OPA|Gofood|Press Start|McDonald/i.test(line)
+  return resultData.analyzeResult.readResults.flatMap((page) =>
+    page.lines.map((line) => line.text.trim())
   );
-  return merchantLine || "";
 }
 
-function detectDate(text) {
-  const dateMatch = text.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/);
-  return dateMatch ? dateMatch[0] : "";
+// bersihkan string menjadi angka utuh
+function parseCurrency(str) {
+  // hapus semua kecuali digit, lalu parseInt
+  const digits = (str || "").replace(/[^\d]/g, "");
+  return digits ? parseInt(digits, 10) : 0;
 }
 
-function detectPaymentMethod(lines) {
-  const paymentLine = lines.find((line) =>
-    /BCA|QR|Gofood|Cash|Debit/i.test(line)
-  );
-  return paymentLine ? paymentLine.replace(/:/g, "").trim() : "";
-}
+function parseReceiptText(lines) {
+  const result = {
+    items: [],
+    subtotal: 0,
+    discount: 0,
+    tax: 0,
+    taxPercent: 0, // 👈
+    serviceCharge: 0,
+    total: 0,
+  };
 
-function findStandaloneTotal(lines) {
-  const totalLine = lines.find(
-    (line) => /^\d+\.\d{3}$/.test(line) || /^\d+\,\d{3}$/.test(line)
-  );
-  return totalLine ? formatCurrency(totalLine) : 0;
-}
-
-function parseOpaCakery(lines) {
-  const items = [];
-  let total = 0;
-  let paymentMethod = "";
-
+  // 1) Merge pass with three rules:
+  const merged = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const curr = lines[i].trim();
+    const nxt1 = (lines[i + 1] || "").trim();
+    const nxt2 = (lines[i + 2] || "").trim();
+    const nxt3 = (lines[i + 3] || "").trim();
 
-    // Item detection (multi-line format)
-    if (/Malmil|Cheese|Choco/i.test(line)) {
-      const nextLine = lines[i + 1] || "";
-      const priceMatch = nextLine.match(/@?([\d.,]+)/);
-
-      if (priceMatch) {
-        items.push({
-          name: line,
-          quantity: 1,
-          pricePerItem: formatCurrency(priceMatch[1]),
-          price: formatCurrency(priceMatch[1]),
-        });
-        i++; // Skip next line
-      }
-    }
-
-    // Total detection
-    if (/19\.000/i.test(line) && !/@/.test(line)) {
-      total = formatCurrency(line);
-    }
-
-    // Payment method detection
-    if (/BCA|QR/i.test(line)) {
-      paymentMethod = line.replace(/:/g, "").trim();
-    }
-  }
-
-  return { items, total, paymentMethod };
-}
-
-function parseGofood(lines) {
-  const items = [];
-  let subtotal = 0;
-  let discount = 0;
-  let total = 0;
-
-  for (const line of lines) {
-    // Item detection
-    const itemMatch = line.match(/(.+?)\s+(\d+x)?\s*Rp?\s*([\d.,]+)/i);
-    if (itemMatch) {
-      items.push({
-        name: itemMatch[1].trim(),
-        quantity: parseInt(itemMatch[2]) || 1,
-        pricePerItem: formatCurrency(itemMatch[3]),
-        price: formatCurrency(itemMatch[3]),
-      });
-    }
-
-    // Discount detection
-    if (/\(Rp|-\s*Rp/i.test(line)) {
-      const discMatch = line.match(/[\d.,]+/);
-      if (discMatch) {
-        discount += formatCurrency(discMatch[0]);
-      }
-    }
-
-    // Total detection
-    if (/Subtotal/i.test(line)) {
-      const subtotalMatch = line.match(/[\d.,]+/);
-      if (subtotalMatch) subtotal = formatCurrency(subtotalMatch[0]);
-    }
-
-    if (/Total/i.test(line) && !/Subtotal/i.test(line)) {
-      const totalMatch = line.match(/[\d.,]+/);
-      if (totalMatch) total = formatCurrency(totalMatch[0]);
-    }
-  }
-
-  return { items, subtotal, discount, total };
-}
-
-function parseGenericItems(lines) {
-  const items = [];
-
-  for (const line of lines) {
-    // Standard item format: Name Price
-    const stdMatch = line.match(/^(.+?)\s+(\d+x)?\s*Rp?\s*([\d.,]+)$/i);
-    if (stdMatch) {
-      items.push({
-        name: stdMatch[1].trim(),
-        quantity: parseInt(stdMatch[2]) || 1,
-        pricePerItem: formatCurrency(stdMatch[3]),
-        price: formatCurrency(stdMatch[3]),
-      });
+    // (a) qty+name on this line + price next
+    if (/\d+\s+\D+$/.test(curr) && /^[\d.,]+$/.test(nxt1)) {
+      merged.push(`${curr} ${nxt1}`);
+      i++;
       continue;
     }
 
-    // Quantity format: 2x @30.000 60.000
-    const qtyMatch = line.match(/^(\d+x)\s*@?\s*([\d.,]+)\s+([\d.,]+)$/i);
-    if (qtyMatch) {
-      items.push({
-        name: `Item ${items.length + 1}`,
-        quantity: parseInt(qtyMatch[1]),
-        pricePerItem: formatCurrency(qtyMatch[2]),
-        price: formatCurrency(qtyMatch[3]),
-      });
+    // (b) name-only + "qty price" next
+    if (!/\d/.test(curr) && /^(\d+)\s+[\d.,]+$/.test(nxt1)) {
+      const [qty, price] = nxt1.split(/\s+/);
+      merged.push(`${qty} ${curr} ${price}`);
+      i++;
+      continue;
     }
+
+    // (c) 4-line: name, "2x", "@unit", "total"
+    if (
+      /^\d+\s*x$/i.test(nxt1) &&
+      /^@[\d.,]+$/.test(nxt2) &&
+      /^[\d.,]+$/.test(nxt3)
+    ) {
+      const qty = nxt1.replace(/x/i, "");
+      const total = nxt3;
+      merged.push(`${qty} ${curr} ${total}`);
+      i += 3;
+      continue;
+    }
+
+    // fallback
+    merged.push(curr);
   }
 
-  return items;
+  // 2) Item regexes
+  const itemPatterns = [
+    /^(.+?)\s+(\d+)\s*x\s*Rp[\s\.]*([\d.,]+)$/i,
+    /^(\d+)\s*x\s*Rp[\s\.]*([\d.,]+)\s+(.+)$/i,
+    /^(\d+)\s+(.+?)\s+([\d.,]+)$/,
+  ];
+
+  // 3) Parse merged lines
+  merged.forEach((line, idx) => {
+    // discount
+    if (/^-\s*[\d.,]+$/.test(line)) {
+      result.discount += parseCurrency(line);
+      return;
+    }
+
+    // try item patterns
+    for (const pat of itemPatterns) {
+      const m = line.match(pat);
+      if (!m) continue;
+
+      let qty, name, price;
+      if (pat === itemPatterns[2]) {
+        qty = parseInt(m[1], 10);
+        name = m[2];
+        price = parseCurrency(m[3]);
+      } else if (pat === itemPatterns[0]) {
+        name = m[1];
+        qty = parseInt(m[2], 10);
+        price = parseCurrency(m[3]);
+      } else {
+        qty = parseInt(m[1], 10);
+        price = parseCurrency(m[2]);
+        name = m[3];
+      }
+
+      result.items.push({
+        name,
+        quantity: qty,
+        pricePerItem: Math.round(price / qty),
+        price,
+      });
+      return;
+    }
+
+    // helper to get next-line numeric
+    const seeNext = (rx) => {
+      if (!rx.test(line)) return null;
+      const m2 = merged[idx + 1]?.match(/[\d.,]+/);
+      return m2 ? parseCurrency(m2[0]) : null;
+    };
+
+    // Subtotal
+    if (/^subtotal|^total item|^total belanja/i.test(line)) {
+      const v = seeNext(/^(subtotal|total item|total belanja)/i);
+      if (v != null) {
+        result.subtotal = v;
+        return;
+      }
+    }
+    // tax
+    if (/^(PPN|pajak|tax)/i.test(line)) {
+      const line1 = merged[idx + 1] || "";
+      const line2 = merged[idx + 2] || "";
+
+      const percentMatch = line1.match(/(\d{1,3})\s*%/);
+      const maybePercent = !!percentMatch;
+
+      const value = maybePercent ? parseCurrency(line2) : parseCurrency(line1);
+
+      result.tax = value;
+
+      if (maybePercent) {
+        result.taxPercent = parseInt(percentMatch[1]);
+      } else if (result.subtotal) {
+        result.taxPercent = Math.round((value / result.subtotal) * 100);
+      }
+
+      return;
+    }
+
+    // Service
+    if (/service/i.test(line)) {
+      const v = seeNext(/service/i);
+      if (v != null) {
+        result.serviceCharge = v;
+        return;
+      }
+    }
+    // Final Total
+    if (/^total$/i.test(line)) {
+      const v = seeNext(/^total$/i);
+      if (v != null) {
+        result.total = v;
+        return;
+      }
+    }
+  });
+
+  // 4) Fallback subtotal
+  if (!result.subtotal) {
+    result.subtotal = result.items.reduce((s, it) => s + it.price, 0);
+  }
+
+  // ✅ 5) Fallback total jika total == 0
+  if (!result.total || result.total === 0) {
+    result.total =
+      result.subtotal + result.tax + result.serviceCharge - result.discount;
+  }
+
+  return result;
 }
+
+
+
+router.post("/", upload.single("image"), async (req, res) => {
+  try {
+    const filePath = req.file.path;
+    const textLines = await extractTextFromImage(filePath);
+    fs.unlinkSync(filePath);
+
+    const parsedData = parseReceiptText(textLines);
+    res.json({ text: textLines, parsed: parsedData });
+  } catch (error) {
+    console.error("Error extracting text:", error);
+    res.status(500).json({ error: "Failed to extract text" });
+  }
+});
 
 export default router;
