@@ -4,6 +4,7 @@ const sharedBillSchema = new mongoose.Schema(
   {
     billData: Object,
     people: Array,
+    paymentMethods: Array,
   },
   {
     timestamps: true,
