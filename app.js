@@ -8,15 +8,28 @@ import shareRoute from "./routes/share.js"; // 🔥 New
 
 const app = express();
 
+const allowedOrigins = [
+  "https://splitbill.rifqinaufal11.studio", // Your production frontend
+  "http://localhost:3000", // Your local development frontend
+];
+
 // Middleware
 app.use(
   cors({
-    origin: "https://splitbill.rifqinaufal11.studio",
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) === -1) {
+        const msg =
+          "The CORS policy for this site does not allow access from the specified Origin.";
+        return callback(new Error(msg), false);
+      }
+      return callback(null, true);
+    },
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
 );
-app.use(express.json()); // 👈 Penting agar bisa baca JSON body
+app.use(express.json());
 
 // Connect DB
 connectDB();
