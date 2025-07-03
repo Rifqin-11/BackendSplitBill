@@ -9,18 +9,14 @@ export async function parseReceiptWithGemini(lines) {
   const model = "gemini-1.5-flash-latest"; // Using a modern, efficient model
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
 
+  // Di dalam file backend/utils/geminiParser.js
+
   const prompt = `
-Extract structured data from the following receipt text.
-The output must be a single, clean JSON object with no extra text or markdown formatting.
-Use snake_case for all JSON keys.
+You are an expert receipt data extractor. Your goal is to accurately extract structured data into a clean JSON object based on the provided text.
 
-**VERY IMPORTANT RULES:**
-1.  **Quantity Calculation Logic (Default):** For any item where the quantity is greater than 1, assume the price shown on the receipt line is the TOTAL PRICE. You MUST calculate the 'price_per_item' by dividing this total price by the quantity. The 'price' field in the JSON should be this total price from the receipt.
-2.  **EXTRACT, DO NOT CALCULATE:** For the 'subtotal', 'tax', and 'total' fields, you MUST extract the numeric value written directly next to these exact words on the receipt. DO NOT calculate these values by summing up items yourself. Extract the explicit values only.
-3.  **Indonesian Tax:** Restaurant tax in Indonesia is often abbreviated as "PB1" or "PPN". OCR might misread "PB1".
-4.  **Multi-line Supermarket Format:** Some receipts, especially from supermarkets like Indomaret, use a multi-line format for a single item. The pattern is often: [Item Name], then on the next line [Quantity], then next [Price Per Item], and finally on the next line [Total Price]. When you see this 4-line pattern, you MUST use the value from the 'Total Price' line as the 'price' field and the value from the 'Price Per Item' line as the 'price_per_item' field.
+The main challenge is to correctly identify the 'price' (total price for the line item) and 'price_per_item'. Use the patterns and examples below to make the correct decision.
 
-The JSON object should have this exact structure:
+Your final output MUST ONLY be the clean JSON object with this exact structure:
 {
   "items": [
     {
@@ -38,10 +34,49 @@ The JSON object should have this exact structure:
   "total": "number"
 }
 
-Receipt Text:
 ---
+### LOGIC AND PATTERNS ###
+
+You must analyze the receipt and decide which of the following patterns an item follows.
+
+#### Pattern 1: Single Price Listed (Common in Restaurants)
+In this format, only one price is listed for an item, and it represents the TOTAL PRICE for that line.
+
+**Example Text:**
+\`\`\`
+5 ICE TEA JUMBO 47.500
+\`\`\`
+**Correct Logic:**
+- The value 47.500 is the total 'price'.
+- The 'price_per_item' MUST be calculated: 47.500 / 5 = 9500.
+- **Correct JSON:** { "name": "ICE TEA JUMBO", "quantity": 5, "price_per_item": 9500, "price": 47500 }
+
+---
+
+#### Pattern 2: Two Prices Listed (Common in Supermarkets)
+In this format, an item is followed by its quantity, price per item, and total price, often on multiple lines.
+
+**Example Text:**
+\`\`\`
+INDOMI GORENG SPC 80
+2
+3200
+6,400
+\`\`\`
+**Correct Logic:**
+- There are two prices, 3200 (Price A) and 6400 (Price B).
+- Check the math: quantity * Price A = 2 * 3200 = 6400, which equals Price B.
+- Therefore, 'price_per_item' is Price A (3200) and 'price' is Price B (6400).
+- **Correct JSON:** { "name": "INDOMI GORENG SPC 80", "quantity": 2, "price_per_item": 3200, "price": 6400 }
+
+---
+
+### FINAL RULE ###
+For the 'subtotal', 'tax', and 'total' fields, you MUST extract the numeric value written directly next to these words on the receipt. DO NOT calculate these values by summing up items yourself.
+
+---
+### RECEIPT TEXT TO PARSE ###
 ${lines.join("\n")}
----
 `;
 
   // The new request body structure for generateContent
