@@ -15,9 +15,10 @@ The output must be a single, clean JSON object with no extra text or markdown fo
 Use snake_case for all JSON keys.
 
 **VERY IMPORTANT RULES:**
-1.  **Quantity Calculation Logic:** For any item where the quantity is greater than 1, the price shown on the receipt line is the TOTAL PRICE. You MUST calculate the 'price_per_item' by dividing this total price by the quantity. The 'price' field in the JSON should be this total price from the receipt.
+1.  **Quantity Calculation Logic (Default):** For any item where the quantity is greater than 1, assume the price shown on the receipt line is the TOTAL PRICE. You MUST calculate the 'price_per_item' by dividing this total price by the quantity. The 'price' field in the JSON should be this total price from the receipt.
 2.  **EXTRACT, DO NOT CALCULATE:** For the 'subtotal', 'tax', and 'total' fields, you MUST extract the numeric value written directly next to these exact words on the receipt. DO NOT calculate these values by summing up items yourself. Extract the explicit values only.
 3.  **Indonesian Tax:** Restaurant tax in Indonesia is often abbreviated as "PB1" or "PPN". OCR might misread "PB1".
+4.  **Multi-line Supermarket Format:** Some receipts, especially from supermarkets like Indomaret, use a multi-line format for a single item. The pattern is often: [Item Name], then on the next line [Quantity], then next [Price Per Item], and finally on the next line [Total Price]. When you see this 4-line pattern, you MUST use the value from the 'Total Price' line as the 'price' field and the value from the 'Price Per Item' line as the 'price_per_item' field.
 
 The JSON object should have this exact structure:
 {
