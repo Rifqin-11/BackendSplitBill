@@ -6,7 +6,7 @@ export async function parseReceiptWithGemini(lines) {
     throw new Error("GEMINI_API_KEY environment variable not set.");
   }
 
-  const model = "gemini-1.5-flash-latest"; // Using a modern, efficient model
+  const model = "gemini-2.5-flash-lite-preview-06-17"; // Using a modern, efficient model
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
 
   // Di dalam file backend/utils/geminiParser.js
