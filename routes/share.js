@@ -6,7 +6,8 @@ const router = express.Router();
 // POST /api/share
 router.post("/", async (req, res) => {
   try {
-    const { billData, people } = req.body;
+    const { billData, people, paymentMethods } = req.body;
+
 
     console.log("📥 billData:", JSON.stringify(billData, null, 2));
     console.log("👥 people:", JSON.stringify(people, null, 2));
@@ -15,7 +16,12 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Missing billData or people" });
     }
 
-    const shared = await SharedBill.create({ billData, people });
+    const shared = await SharedBill.create({
+      billData,
+      people,
+      paymentMethods,
+    });
+
 
     res.status(201).json({ id: shared._id });
   } catch (err) {
