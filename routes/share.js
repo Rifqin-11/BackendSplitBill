@@ -7,10 +7,19 @@ const router = express.Router();
 router.post("/", async (req, res) => {
   try {
     const { billData, people } = req.body;
+
+    console.log("📥 billData:", JSON.stringify(billData, null, 2));
+    console.log("👥 people:", JSON.stringify(people, null, 2));
+
+    if (!billData || !people) {
+      return res.status(400).json({ error: "Missing billData or people" });
+    }
+
     const shared = await SharedBill.create({ billData, people });
+
     res.status(201).json({ id: shared._id });
   } catch (err) {
-    console.error(err);
+    console.error("🔥 Error in /api/share:", err);
     res.status(500).json({ error: "Failed to share bill" });
   }
 });

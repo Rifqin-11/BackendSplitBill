@@ -1,11 +1,11 @@
 import mongoose from "mongoose";
 
-const SharedBillSchema = new mongoose.Schema(
+const sharedBillSchema = new mongoose.Schema(
   {
-    billData: { type: Object, required: true },
-    people: { type: Array, required: true },
+    billData: Object,
+    people: Array,
   },
   { timestamps: true }
 );
 
-export default mongoose.model("SharedBill", SharedBillSchema);
+export default mongoose.model("SharedBill", sharedBillSchema);
