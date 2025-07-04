@@ -75,6 +75,10 @@ INDOMI GORENG SPC 80
 For the 'subtotal', 'tax', and 'total' fields, you MUST extract the numeric value written directly next to these words on the receipt. DO NOT calculate these values by summing up items yourself.
 
 ---
+### TAXATION RULE ###
+**IMPORTANT:** If you find text on the subtotal line indicating that tax is already included (e.g., "Subtotal (Termasuk PPN)", "sudah termasuk pajak", "including tax", "VAT included"), you MUST set the 'tax' and 'tax_percent' fields to 0 in your JSON output. The subtotal value itself should still be extracted as is. If no such mention is made, extract the tax value as written on the receipt.
+
+---
 ### RECEIPT TEXT TO PARSE ###
 ${lines.join("\n")}
 `;
