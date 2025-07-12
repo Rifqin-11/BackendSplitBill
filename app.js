@@ -4,13 +4,13 @@ import cors from "cors";
 import { PORT } from "./config/env.js";
 import { connectDB } from "./config/db.js";
 import uploadRoute from "./routes/upload.js";
-import shareRoute from "./routes/share.js"; // 🔥 New
+import shareRoute from "./routes/share.js";
 
 const app = express();
 
 const allowedOrigins = [
-  "https://splitbill.rifqinaufal11.studio", // Your production frontend
-  "http://localhost:3000", // Your local development frontend
+  "https://splitbill.rifqinaufal11.studio", // production frontend
+  "http://localhost:3000", // local development frontend
 ];
 
 // Middleware
@@ -35,8 +35,8 @@ app.use(express.json());
 connectDB();
 
 // Routes
-app.use("/api/receipt", uploadRoute);
-app.use("/api/share", shareRoute); // 🔥 New
+app.use("/api/receipt", uploadRoute); // Upload route for receipts
+app.use("/api/share", shareRoute); // Share route for sharing bills
 
 app.get("/", (req, res) => res.send("SplitBill API is running."));
 

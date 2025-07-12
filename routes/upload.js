@@ -7,7 +7,7 @@ import { parseReceiptWithGemini } from "../utils/geminiParser.js";
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
-// panggil Azure OCR
+// function to extract text from image using Azure Computer Vision
 async function extractTextFromImage(filePath) {
   const stream = () => fs.createReadStream(filePath);
   const result = await computerVisionClient.readInStream(stream);
@@ -31,19 +31,19 @@ router.post("/", upload.single("image"), async (req, res) => {
     const textLines = await extractTextFromImage(filePath);
     fs.unlinkSync(filePath);
 
-    // Langkah 1: Dapatkan hasil parsing awal dari Gemini
+    // get the text lines from the OCR result
     const initialParsedData = await parseReceiptWithGemini(textLines);
 
-    // ✅ Langkah 2: Lakukan validasi dan koreksi
+    // validate and correct the parsed data
     let finalData = initialParsedData;
 
-    // Pastikan data yang dibutuhkan untuk validasi ada
+    // is there a subtotal in the initial parsed data?
     if (
       initialParsedData &&
       initialParsedData.items &&
       initialParsedData.subtotal > 0
     ) {
-      // Hitung subtotal manual dari hasil parsing awal
+      // calculate manual subtotal from items
       const manualSubtotal = initialParsedData.items.reduce(
         (sum, item) => sum + item.price,
         0
@@ -51,39 +51,39 @@ router.post("/", upload.single("image"), async (req, res) => {
 
       const ocrSubtotal = initialParsedData.subtotal;
 
-      // Langkah 3: Heuristik - Jika subtotal manual jauh lebih besar, asumsi kita salah.
-      // (contoh: lebih dari 50% lebih besar dari subtotal struk)
+      // if manual subtotal is significantly different from OCR subtotal
+      // (e.g., more than 50% difference), we assume a parsing error
       if (manualSubtotal > ocrSubtotal * 1.5) {
         console.log(
           "Validation triggered: Re-calculating prices based on price-per-item assumption."
         );
 
-        // Langkah 4: Lakukan koreksi
+        // correct the items based on the assumption that 'price' is actually 'price_per_item'
         const correctedItems = initialParsedData.items.map((item) => {
-          // Anggap 'price' yang salah parsing tadi adalah 'price_per_item'
+          // if price_per_item is not defined, calculate it
           const pricePerItem = item.price / item.quantity;
 
           return {
             ...item,
             price_per_item: pricePerItem,
-            price: pricePerItem * item.quantity, // Hitung ulang harga total yang benar
+            price: pricePerItem * item.quantity, // calculate total price based on quantity
           };
         });
 
-        // Hitung ulang subtotal berdasarkan item yang sudah dikoreksi
+        // calculate the corrected subtotal
         const correctedSubtotal = correctedItems.reduce(
           (sum, item) => sum + item.price,
           0
         );
 
-        // Hitung ulang total keseluruhan
+        // calculate the corrected total
         const correctedTotal =
           correctedSubtotal +
           initialParsedData.tax +
           initialParsedData.serviceCharge -
           initialParsedData.discount;
 
-        // Siapkan data final yang sudah dikoreksi
+        // update final data with corrected values
         finalData = {
           ...initialParsedData,
           items: correctedItems,
@@ -93,7 +93,7 @@ router.post("/", upload.single("image"), async (req, res) => {
       }
     }
 
-    // Kirim data final (bisa jadi data awal atau yang sudah dikoreksi)
+    // share the final parsed data
     res.json({ text: textLines, parsed: finalData });
   } catch (error) {
     console.error("Error processing receipt:", error);

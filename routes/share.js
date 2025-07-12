@@ -25,7 +25,7 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({ id: shared._id });
   } catch (err) {
-    console.error("🔥 Error in /api/share:", err);
+    console.error("Error in /api/share:", err);
     res.status(500).json({ error: "Failed to share bill" });
   }
 });
